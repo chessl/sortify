@@ -3,10 +3,17 @@ type FoloMetadata = {
   description?: string;
 };
 
+export type VideoPlatform = "YouTube" | "bilibili";
+
 export type FoloEntry =
   | (FoloMetadata & {
       kind: "url";
       url: string;
+    })
+  | (FoloMetadata & {
+      kind: "video";
+      url: string;
+      platform: VideoPlatform;
     })
   | (FoloMetadata & {
       kind: "text";
@@ -56,7 +63,10 @@ export function parseFoloPayload(payload: unknown): FoloEntry | null {
     try {
       const url = new URL(entry.url);
       if (url.protocol === "http:" || url.protocol === "https:") {
-        return { kind: "url", url: entry.url, ...metadata };
+        const platform = getVideoPlatform(url.hostname);
+        return platform
+          ? { kind: "video", url: entry.url, platform, ...metadata }
+          : { kind: "url", url: entry.url, ...metadata };
       }
     } catch {}
   }
@@ -71,5 +81,24 @@ export function parseFoloPayload(payload: unknown): FoloEntry | null {
     ...metadata,
     ...(typeof entry.author === "string" ? { author: entry.author } : {}),
   };
+}
+
+function getVideoPlatform(hostname: string): VideoPlatform | null {
+  const host = hostname.toLowerCase();
+  if (
+    host === "youtu.be" ||
+    host === "youtube.com" ||
+    host.endsWith(".youtube.com")
+  ) {
+    return "YouTube";
+  }
+  if (
+    host === "b23.tv" ||
+    host === "bilibili.com" ||
+    host.endsWith(".bilibili.com")
+  ) {
+    return "bilibili";
+  }
+  return null;
 }
 

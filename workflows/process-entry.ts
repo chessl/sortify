@@ -1,6 +1,8 @@
+import { getVideoTranscript, type VideoTranscript } from "@/lib/bibigpt";
 import {
   persistTextArtifact,
-  type TextArtifactReference,
+  persistVideoTranscriptArtifact,
+  type ContentArtifactReference,
 } from "@/lib/content";
 import { saveUrlToCubox } from "@/lib/cubox";
 import type { FoloEntry } from "@/lib/folo";
@@ -12,8 +14,14 @@ export async function processEntryWorkflow(entry: FoloEntry) {
     return saveUrlEntry(entry);
   }
 
-  const reference = await persistTextEntry(entry);
-  return saveTextEntry(entry, reference);
+  if (entry.kind === "text") {
+    const reference = await persistTextEntry(entry);
+    return saveTextEntry(entry, reference);
+  }
+
+  const transcript = await fetchVideoTranscript(entry);
+  const reference = await persistVideoEntry(entry, transcript);
+  return saveVideoEntry(entry, transcript.title, reference);
 }
 
 async function saveUrlEntry(entry: Extract<FoloEntry, { kind: "url" }>) {
@@ -32,7 +40,7 @@ async function persistTextEntry(
 
 async function saveTextEntry(
   entry: Extract<FoloEntry, { kind: "text" }>,
-  reference: TextArtifactReference,
+  reference: ContentArtifactReference,
 ) {
   "use step";
 
@@ -42,6 +50,39 @@ async function saveTextEntry(
     ...(entry.description !== undefined
       ? { description: entry.description }
       : {}),
+  });
+
+  return { ...result, contentId: reference.contentId };
+}
+
+async function fetchVideoTranscript(
+  entry: Extract<FoloEntry, { kind: "video" }>,
+) {
+  "use step";
+
+  return getVideoTranscript(entry.url);
+}
+
+async function persistVideoEntry(
+  entry: Extract<FoloEntry, { kind: "video" }>,
+  transcript: VideoTranscript,
+) {
+  "use step";
+
+  return persistVideoTranscriptArtifact(entry, transcript);
+}
+
+async function saveVideoEntry(
+  entry: Extract<FoloEntry, { kind: "video" }>,
+  title: string,
+  reference: ContentArtifactReference,
+) {
+  "use step";
+
+  const result = await saveUrlToCubox({
+    url: reference.pageUrl,
+    title: `[Full transcript · ${entry.platform}] ${title}`,
+    description: `Full ordered transcript from ${entry.platform}. Original video: ${entry.url}`,
   });
 
   return { ...result, contentId: reference.contentId };

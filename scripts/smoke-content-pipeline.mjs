@@ -7,11 +7,75 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-const tempDir = await mkdtemp(join(tmpdir(), "sortify-ticket-28-"));
+const tempDir = await mkdtemp(join(tmpdir(), "sortify-ticket-29-"));
 const workflowDataDir = join(tempDir, "workflow");
 const artifactFile = join(tempDir, "artifact.json");
 const cuboxRequests = [];
 const blobRequests = [];
+const bibigptRequests = [];
+const bibigptToken = "ticket-29-token";
+const youtubeUrl =
+  "https://www.youtube.com/watch?v=sortify29&feature=share";
+const bilibiliUrl =
+  "https://www.bilibili.com/video/BV1Sortify29?p=7&vd_source=folo";
+const bibigptFixtures = new Map([
+  [
+    youtubeUrl,
+    {
+      success: true,
+      id: "sortify29",
+      service: "youtube",
+      sourceUrl: youtubeUrl,
+      htmlUrl: "https://bibigpt.co/youtube-sortify29",
+      costDuration: 125.5,
+      remainingTime: 1_000,
+      detail: {
+        id: "sortify29",
+        url: youtubeUrl,
+        type: "youtube",
+        title: "YouTube complete transcript",
+        author: "YouTube creator",
+        descriptionText: "YouTube source description",
+        cover: "https://example.com/youtube-cover.jpg",
+        duration: 125.5,
+        publishedDate: "2026-08-01",
+        subtitlesArray: [
+          { index: 0, startTime: 0, end: 1.9996, text: "YT FIRST SEGMENT 29" },
+          { index: 1, startTime: 1.9996, end: 120, text: "YT MIDDLE SEGMENT 29" },
+          { index: 2, startTime: 120, end: 125.5, text: "YT FINAL SEGMENT 29" },
+        ],
+      },
+    },
+  ],
+  [
+    bilibiliUrl,
+    {
+      success: true,
+      id: "BV1Sortify29",
+      service: "bilibili",
+      sourceUrl: bilibiliUrl,
+      htmlUrl: "https://bibigpt.co/bilibili-sortify29",
+      costDuration: 63,
+      remainingTime: 900,
+      detail: {
+        id: "BV1Sortify29",
+        url: bilibiliUrl,
+        type: "bilibili",
+        title: "bilibili multi-part complete transcript",
+        author: "bilibili creator",
+        description: "Part 7 source description",
+        cover: "https://example.com/bilibili-cover.jpg",
+        duration: 63,
+        publishedDate: "2026-08-02",
+        subtitlesArray: [
+          { index: 0, startTime: 0, end: 20, text: "BILI P7 FIRST SEGMENT 29" },
+          { index: 1, startTime: 20, end: 40, text: "BILI P7 MIDDLE SEGMENT 29" },
+          { index: 2, startTime: 40, end: 63, text: "BILI P7 FINAL SEGMENT 29" },
+        ],
+      },
+    },
+  ],
+]);
 let cuboxResponse = { status: 200, body: { code: 200, message: "", data: null } };
 
 const cuboxServer = createServer((request, response) => {
@@ -36,6 +100,33 @@ cuboxServer.listen(0, "127.0.0.1");
 await once(cuboxServer, "listening");
 const cuboxAddress = cuboxServer.address();
 assert(cuboxAddress && typeof cuboxAddress !== "string");
+
+const bibigptServer = createServer((request, response) => {
+  const requestUrl = new URL(request.url ?? "/", "http://bibigpt.local");
+  const sourceUrl = requestUrl.searchParams.get("url");
+  bibigptRequests.push({
+    method: request.method,
+    pathname: requestUrl.pathname,
+    sourceUrl,
+    authorization: request.headers.authorization,
+  });
+  const fixture = sourceUrl === null ? undefined : bibigptFixtures.get(sourceUrl);
+  if (
+    request.method !== "GET" ||
+    requestUrl.pathname !== "/api/v1/getSubtitle" ||
+    fixture === undefined
+  ) {
+    response.writeHead(404, { "content-type": "application/json" });
+    response.end(JSON.stringify({ message: "Unknown smoke URL" }));
+    return;
+  }
+  response.writeHead(200, { "content-type": "application/json" });
+  response.end(JSON.stringify(fixture));
+});
+bibigptServer.listen(0, "127.0.0.1");
+await once(bibigptServer, "listening");
+const bibigptAddress = bibigptServer.address();
+assert(bibigptAddress && typeof bibigptAddress !== "string");
 
 const blobServer = createServer((request, response) => {
   let body = "";
@@ -92,6 +183,8 @@ const app = spawn(
     env: {
       ...process.env,
       BLOB_READ_WRITE_TOKEN: "vercel_blob_rw_mock-store_secret",
+      BIBIGPT_API_TOKEN: bibigptToken,
+      BIBIGPT_API_URL: `http://127.0.0.1:${bibigptAddress.port}/api/v1/getSubtitle`,
       CUBOX_API_URL: `http://127.0.0.1:${cuboxAddress.port}/save`,
       NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --import=${blobLoader}`.trim(),
       SORTIFY_APP_URL: appUrl,
@@ -255,6 +348,138 @@ try {
     },
   });
 
+  async function runVideoSmoke({
+    sourceUrl,
+    platform,
+    title,
+    author,
+    description,
+    coverUrl,
+    duration,
+    publishedDate,
+    subtitles,
+    expectedTiming,
+  }) {
+    const bibigptCount = bibigptRequests.length;
+    const blobCount = blobRequests.length;
+    const cuboxCount = cuboxRequests.length;
+    const response = await fetch(`${appUrl}/api/webhooks/folo`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        entry: {
+          title: `Folo title for ${platform}`,
+          description: `Folo description for ${platform}`,
+          url: sourceUrl,
+        },
+      }),
+    });
+    assert.equal(response.status, 202);
+    const handoff = await response.json();
+    const result = await getRun(handoff.runId).returnValue;
+    assert.equal(result.outcome, "saved");
+    assert.match(result.contentId, /^[0-9a-f-]{36}$/);
+    assert.equal(result.url, `${appUrl}/content/${result.contentId}`);
+
+    assert.equal(bibigptRequests.length, bibigptCount + 1);
+    assert.deepEqual(bibigptRequests[bibigptCount], {
+      method: "GET",
+      pathname: "/api/v1/getSubtitle",
+      sourceUrl,
+      authorization: `Bearer ${bibigptToken}`,
+    });
+
+    assert.equal(blobRequests.length, blobCount + 1);
+    const artifactRequest = blobRequests[blobCount];
+    assert.equal(artifactRequest.method, "PUT");
+    assert.equal(
+      artifactRequest.pathname,
+      `content/${result.contentId}.json`,
+    );
+    assert.deepEqual(artifactRequest.body, {
+      kind: "video-transcript",
+      platform,
+      sourceUrl,
+      title,
+      subtitles,
+      author,
+      description,
+      coverUrl,
+      duration,
+      publishedDate,
+    });
+
+    assert.equal(cuboxRequests.length, cuboxCount + 1);
+    assert.deepEqual(cuboxRequests[cuboxCount], {
+      method: "POST",
+      url: "/save",
+      body: {
+        type: "url",
+        content: result.url,
+        title: `[Full transcript · ${platform}] ${title}`,
+        description: `Full ordered transcript from ${platform}. Original video: ${sourceUrl}`,
+      },
+    });
+
+    const videoPageResponse = await fetch(result.url);
+    assert.equal(videoPageResponse.status, 200);
+    const videoPageHtml = await videoPageResponse.text();
+    assert(videoPageHtml.includes(title));
+    assert(videoPageHtml.includes(platform));
+    assert(videoPageHtml.includes(author));
+    assert(videoPageHtml.includes(description));
+    assert(videoPageHtml.includes(publishedDate));
+    assert(videoPageHtml.includes("Full transcript"));
+    assert(videoPageHtml.includes(expectedTiming));
+    assert(videoPageHtml.includes("Open original video"));
+    assert(videoPageHtml.includes(sourceUrl.replaceAll("&", "&amp;")));
+    for (const subtitle of subtitles) {
+      assert(videoPageHtml.includes(subtitle.text));
+    }
+
+    return {
+      result,
+      pageStatus: videoPageResponse.status,
+      hasFinalSegment: videoPageHtml.includes(
+        subtitles[subtitles.length - 1].text,
+      ),
+    };
+  }
+
+  const youtubeSmoke = await runVideoSmoke({
+    sourceUrl: youtubeUrl,
+    platform: "YouTube",
+    title: "YouTube complete transcript",
+    author: "YouTube creator",
+    description: "YouTube source description",
+    coverUrl: "https://example.com/youtube-cover.jpg",
+    duration: 125.5,
+    publishedDate: "2026-08-01",
+    subtitles: [
+      { text: "YT FIRST SEGMENT 29", startTime: 0, endTime: 1.9996 },
+      { text: "YT MIDDLE SEGMENT 29", startTime: 1.9996, endTime: 120 },
+      { text: "YT FINAL SEGMENT 29", startTime: 120, endTime: 125.5 },
+    ],
+    expectedTiming: "00:00:02",
+  });
+  const bilibiliSmoke = await runVideoSmoke({
+    sourceUrl: bilibiliUrl,
+    platform: "bilibili",
+    title: "bilibili multi-part complete transcript",
+    author: "bilibili creator",
+    description: "Part 7 source description",
+    coverUrl: "https://example.com/bilibili-cover.jpg",
+    duration: 63,
+    publishedDate: "2026-08-02",
+    subtitles: [
+      { text: "BILI P7 FIRST SEGMENT 29", startTime: 0, endTime: 20 },
+      { text: "BILI P7 MIDDLE SEGMENT 29", startTime: 20, endTime: 40 },
+      { text: "BILI P7 FINAL SEGMENT 29", startTime: 40, endTime: 63 },
+    ],
+    expectedTiming: "00:00:40",
+  });
+  assert.equal(bibigptRequests.length, 2);
+
   cuboxResponse = { status: 200, body: { code: -1100, message: "rejected" } };
   const rejectedResponse = await fetch(`${appUrl}/api/webhooks/folo`, {
     method: "POST",
@@ -284,7 +509,7 @@ try {
     getRun(httpFailureHandoff.runId).returnValue,
     /Cubox request failed with HTTP 500/,
   );
-  assert.equal(blobRequests.length, 1);
+  assert.equal(blobRequests.length, 3);
 
   console.log(
     JSON.stringify({
@@ -299,6 +524,19 @@ try {
       cuboxPageUrl: cuboxRequests[0].body.content,
       urlStatus: urlResponse.status,
       ordinaryUrlOutcome: "saved",
+      youtube: {
+        originalUrl: youtubeUrl,
+        contentId: youtubeSmoke.result.contentId,
+        pageStatus: youtubeSmoke.pageStatus,
+        hasFinalSegment: youtubeSmoke.hasFinalSegment,
+      },
+      bilibili: {
+        originalUrl: bilibiliUrl,
+        contentId: bilibiliSmoke.result.contentId,
+        pageStatus: bilibiliSmoke.pageStatus,
+        hasFinalSegment: bilibiliSmoke.hasFinalSegment,
+      },
+      bibigptBearerRequests: bibigptRequests.length,
       invalidStatus: invalidResponse.status,
       businessRejection: "failed",
       httpFailure: "failed",
@@ -311,6 +549,7 @@ try {
   }
   await Promise.all([
     new Promise((resolveClose) => cuboxServer.close(resolveClose)),
+    new Promise((resolveClose) => bibigptServer.close(resolveClose)),
     new Promise((resolveClose) => blobServer.close(resolveClose)),
   ]);
   await rm(tempDir, { recursive: true, force: true });
