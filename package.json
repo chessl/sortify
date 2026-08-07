@@ -8,7 +8,8 @@
     "start": "next start",
     "smoke:ticket-27": "node scripts/smoke-content-pipeline.mjs",
     "smoke:ticket-28": "node scripts/smoke-content-pipeline.mjs",
-    "smoke:ticket-29": "node scripts/smoke-content-pipeline.mjs"
+    "smoke:ticket-29": "node scripts/smoke-content-pipeline.mjs",
+    "smoke:ticket-30": "node scripts/smoke-content-pipeline.mjs"
   },
   "dependencies": {
     "@vercel/blob": "^2.7.0",

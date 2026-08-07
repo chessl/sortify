@@ -7,17 +7,23 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-const tempDir = await mkdtemp(join(tmpdir(), "sortify-ticket-29-"));
+const tempDir = await mkdtemp(join(tmpdir(), "sortify-ticket-30-"));
 const workflowDataDir = join(tempDir, "workflow");
 const artifactFile = join(tempDir, "artifact.json");
 const cuboxRequests = [];
 const blobRequests = [];
 const bibigptRequests = [];
-const bibigptToken = "ticket-29-token";
+const bibigptToken = "ticket-30-token";
 const youtubeUrl =
   "https://www.youtube.com/watch?v=sortify29&feature=share";
 const bilibiliUrl =
   "https://www.bilibili.com/video/BV1Sortify29?p=7&vd_source=folo";
+const networkFailureUrl =
+  "https://www.youtube.com/watch?v=sortify30-network-failure";
+const emptySubtitlesUrl =
+  "https://www.youtube.com/watch?v=sortify30-empty-subtitles";
+const missingSubtitlesUrl =
+  "https://www.youtube.com/watch?v=sortify30-missing-subtitles";
 const bibigptFixtures = new Map([
   [
     youtubeUrl,
@@ -75,6 +81,25 @@ const bibigptFixtures = new Map([
       },
     },
   ],
+  [
+    emptySubtitlesUrl,
+    {
+      success: true,
+      detail: {
+        title: "Empty subtitles",
+        subtitlesArray: [],
+      },
+    },
+  ],
+  [
+    missingSubtitlesUrl,
+    {
+      success: true,
+      detail: {
+        title: "Missing subtitles",
+      },
+    },
+  ],
 ]);
 let cuboxResponse = { status: 200, body: { code: 200, message: "", data: null } };
 
@@ -110,6 +135,10 @@ const bibigptServer = createServer((request, response) => {
     sourceUrl,
     authorization: request.headers.authorization,
   });
+  if (sourceUrl === networkFailureUrl) {
+    response.destroy();
+    return;
+  }
   const fixture = sourceUrl === null ? undefined : bibigptFixtures.get(sourceUrl);
   if (
     request.method !== "GET" ||
@@ -446,6 +475,52 @@ try {
     };
   }
 
+  async function runDegradedVideoSmoke({ sourceUrl, title }) {
+    const bibigptCount = bibigptRequests.length;
+    const blobCount = blobRequests.length;
+    const cuboxCount = cuboxRequests.length;
+    const response = await fetch(`${appUrl}/api/webhooks/folo`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        entry: {
+          title,
+          description: "This source description must not replace the fallback",
+          url: sourceUrl,
+        },
+      }),
+    });
+    assert.equal(response.status, 202);
+    const handoff = await response.json();
+    const result = await getRun(handoff.runId).returnValue;
+    assert.deepEqual(result, {
+      outcome: "degraded",
+      url: sourceUrl,
+    });
+
+    assert.equal(bibigptRequests.length, bibigptCount + 1);
+    assert.deepEqual(bibigptRequests[bibigptCount], {
+      method: "GET",
+      pathname: "/api/v1/getSubtitle",
+      sourceUrl,
+      authorization: `Bearer ${bibigptToken}`,
+    });
+    assert.equal(blobRequests.length, blobCount);
+    assert.equal(cuboxRequests.length, cuboxCount + 1);
+    assert.deepEqual(cuboxRequests[cuboxCount], {
+      method: "POST",
+      url: "/save",
+      body: {
+        type: "url",
+        content: sourceUrl,
+        title: `[字幕提取失败] ${title}`,
+        description: "字幕提取失败，已保存原视频链接。",
+      },
+    });
+
+    return result;
+  }
+
   const youtubeSmoke = await runVideoSmoke({
     sourceUrl: youtubeUrl,
     platform: "YouTube",
@@ -478,7 +553,56 @@ try {
     ],
     expectedTiming: "00:00:40",
   });
-  assert.equal(bibigptRequests.length, 2);
+  const networkFailureSmoke = await runDegradedVideoSmoke({
+    sourceUrl: networkFailureUrl,
+    title: "Network failure source",
+  });
+  const emptySubtitlesSmoke = await runDegradedVideoSmoke({
+    sourceUrl: emptySubtitlesUrl,
+    title: "Empty subtitles source",
+  });
+  assert.equal(bibigptRequests.length, 4);
+
+  cuboxResponse = { status: 200, body: { code: -1100, message: "rejected" } };
+  const rejectedFallbackBlobCount = blobRequests.length;
+  const rejectedFallbackCuboxCount = cuboxRequests.length;
+  const rejectedFallbackResponse = await fetch(
+    `${appUrl}/api/webhooks/folo`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        entry: {
+          title: "Missing subtitles source",
+          url: missingSubtitlesUrl,
+        },
+      }),
+    },
+  );
+  assert.equal(rejectedFallbackResponse.status, 202);
+  const rejectedFallbackHandoff = await rejectedFallbackResponse.json();
+  await assert.rejects(
+    getRun(rejectedFallbackHandoff.runId).returnValue,
+    /Cubox rejected the save request/,
+  );
+  assert.equal(blobRequests.length, rejectedFallbackBlobCount);
+  const rejectedFallbackRequests = cuboxRequests.slice(
+    rejectedFallbackCuboxCount,
+  );
+  assert(rejectedFallbackRequests.length > 0);
+  for (const request of rejectedFallbackRequests) {
+    assert.deepEqual(request, {
+      method: "POST",
+      url: "/save",
+      body: {
+        type: "url",
+        content: missingSubtitlesUrl,
+        title: "[字幕提取失败] Missing subtitles source",
+        description: "字幕提取失败，已保存原视频链接。",
+      },
+    });
+  }
+  assert.equal(bibigptRequests.length, 5);
 
   cuboxResponse = { status: 200, body: { code: -1100, message: "rejected" } };
   const rejectedResponse = await fetch(`${appUrl}/api/webhooks/folo`, {
@@ -536,8 +660,14 @@ try {
         pageStatus: bilibiliSmoke.pageStatus,
         hasFinalSegment: bilibiliSmoke.hasFinalSegment,
       },
+      degraded: {
+        networkFailure: networkFailureSmoke.outcome,
+        emptySubtitles: emptySubtitlesSmoke.outcome,
+        blobWrites: 0,
+      },
       bibigptBearerRequests: bibigptRequests.length,
       invalidStatus: invalidResponse.status,
+      degradedCuboxRejection: "failed",
       businessRejection: "failed",
       httpFailure: "failed",
     }),

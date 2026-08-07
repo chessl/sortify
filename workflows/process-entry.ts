@@ -19,7 +19,12 @@ export async function processEntryWorkflow(entry: FoloEntry) {
     return saveTextEntry(entry, reference);
   }
 
-  const transcript = await fetchVideoTranscript(entry);
+  const transcriptResult = await fetchVideoTranscript(entry);
+  if (transcriptResult.outcome === "unavailable") {
+    return saveDegradedVideoEntry(entry);
+  }
+
+  const { transcript } = transcriptResult;
   const reference = await persistVideoEntry(entry, transcript);
   return saveVideoEntry(entry, transcript.title, reference);
 }
@@ -61,6 +66,20 @@ async function fetchVideoTranscript(
   "use step";
 
   return getVideoTranscript(entry.url);
+}
+
+async function saveDegradedVideoEntry(
+  entry: Extract<FoloEntry, { kind: "video" }>,
+) {
+  "use step";
+
+  const result = await saveUrlToCubox({
+    url: entry.url,
+    title: `[字幕提取失败] ${entry.title ?? `${entry.platform} video`}`,
+    description: "字幕提取失败，已保存原视频链接。",
+  });
+
+  return { ...result, outcome: "degraded" as const };
 }
 
 async function persistVideoEntry(
