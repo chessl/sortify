@@ -1,8 +1,18 @@
-export type FoloEntry = {
-  url: string;
+type FoloMetadata = {
   title?: string;
   description?: string;
 };
+
+export type FoloEntry =
+  | (FoloMetadata & {
+      kind: "url";
+      url: string;
+    })
+  | (FoloMetadata & {
+      kind: "text";
+      text: string;
+      author?: string;
+    });
 
 export function parseFoloPayload(payload: unknown): FoloEntry | null {
   if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
@@ -22,19 +32,9 @@ export function parseFoloPayload(payload: unknown): FoloEntry | null {
     url?: unknown;
     title?: unknown;
     description?: unknown;
+    content?: unknown;
+    author?: unknown;
   };
-  if (typeof entry.url !== "string") {
-    return null;
-  }
-
-  try {
-    const url = new URL(entry.url);
-    if (url.protocol !== "http:" && url.protocol !== "https:") {
-      return null;
-    }
-  } catch {
-    return null;
-  }
 
   if (entry.title != null && typeof entry.title !== "string") {
     return null;
@@ -44,12 +44,32 @@ export function parseFoloPayload(payload: unknown): FoloEntry | null {
     return null;
   }
 
-  return {
-    url: entry.url,
+
+  const metadata: FoloMetadata = {
     ...(typeof entry.title === "string" ? { title: entry.title } : {}),
     ...(typeof entry.description === "string"
       ? { description: entry.description }
       : {}),
+  };
+
+  if (typeof entry.url === "string") {
+    try {
+      const url = new URL(entry.url);
+      if (url.protocol === "http:" || url.protocol === "https:") {
+        return { kind: "url", url: entry.url, ...metadata };
+      }
+    } catch {}
+  }
+
+  if (typeof entry.content !== "string" || entry.content.length === 0) {
+    return null;
+  }
+
+  return {
+    kind: "text",
+    text: entry.content,
+    ...metadata,
+    ...(typeof entry.author === "string" ? { author: entry.author } : {}),
   };
 }
 

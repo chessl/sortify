@@ -1,9 +1,13 @@
-import type { FoloEntry } from "@/lib/folo";
+type CuboxUrlCard = {
+  url: string;
+  title?: string;
+  description?: string;
+};
 
 const CUBOX_TITLE_LIMIT = 256;
 const CUBOX_DESCRIPTION_LIMIT = 300;
 
-export async function saveUrlToCubox(entry: FoloEntry) {
+export async function saveUrlToCubox(entry: CuboxUrlCard) {
   const apiUrl = process.env.CUBOX_API_URL;
   if (!apiUrl) {
     throw new Error("CUBOX_API_URL is not configured.");

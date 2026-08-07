@@ -8,7 +8,7 @@ export async function POST(request: Request) {
 
   if (!entry) {
     return Response.json(
-      { error: "A valid Folo entry URL is required." },
+      { error: "A valid Folo entry URL or text content is required." },
       { status: 400 },
     );
   }
