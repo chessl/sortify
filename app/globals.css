@@ -48,74 +48,9 @@ h1 {
 
 .intro {
   max-width: 50ch;
-  margin: 24px 0 36px;
+  margin: 24px 0 0;
   color: #aab4c3;
   font-size: 1.05rem;
   line-height: 1.6;
 }
 
-label {
-  display: block;
-  margin-bottom: 8px;
-  font-size: 0.9rem;
-  font-weight: 650;
-}
-
-.controls {
-  display: flex;
-  gap: 10px;
-}
-
-input,
-button {
-  min-height: 46px;
-  border-radius: 10px;
-  font: inherit;
-}
-
-input {
-  min-width: 0;
-  flex: 1;
-  padding: 0 14px;
-  border: 1px solid #3a4555;
-  background: #11151c;
-  color: inherit;
-}
-
-input:focus-visible,
-button:focus-visible {
-  outline: 3px solid #8db4ff;
-  outline-offset: 2px;
-}
-
-button {
-  padding: 0 18px;
-  border: 0;
-  background: #f5f7fa;
-  color: #11151c;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-button:disabled {
-  cursor: wait;
-  opacity: 0.65;
-}
-
-output {
-  display: block;
-  margin-top: 18px;
-  padding: 12px 14px;
-  overflow-wrap: anywhere;
-  border-radius: 10px;
-  background: #11151c;
-  color: #b8cfff;
-  font-family: ui-monospace, monospace;
-  font-size: 0.85rem;
-}
-
-@media (max-width: 520px) {
-  .controls {
-    flex-direction: column;
-  }
-}

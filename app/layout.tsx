@@ -3,8 +3,8 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Sortify Workflow",
-  description: "A minimal Next.js app powered by Vercel Workflow",
+  title: "Sortify",
+  description: "Send Folo entries to Cubox through durable workflows",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
