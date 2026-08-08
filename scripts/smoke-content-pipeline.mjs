@@ -14,6 +14,7 @@ const cuboxRequests = [];
 const blobRequests = [];
 const bibigptRequests = [];
 const bibigptToken = "ticket-30-token";
+const webhookSecret = "ticket-30-webhook-secret";
 const youtubeUrl =
   "https://www.youtube.com/watch?v=sortify29&feature=share";
 const bilibiliUrl =
@@ -202,6 +203,7 @@ const appPort = appAddress.port;
 await new Promise((resolveClose) => portProbe.close(resolveClose));
 
 const appUrl = `http://127.0.0.1:${appPort}`;
+const webhookUrl = `${appUrl}/api/webhooks/folo?secret=${encodeURIComponent(webhookSecret)}`;
 const blobLoader = pathToFileURL(
   resolve("scripts/smoke-content-pipeline-blob.mjs"),
 ).href;
@@ -215,6 +217,7 @@ const app = spawn(
       BIBIGPT_API_TOKEN: bibigptToken,
       BIBIGPT_API_URL: `http://127.0.0.1:${bibigptAddress.port}/api/v1/getSubtitle`,
       CUBOX_API_URL: `http://127.0.0.1:${cuboxAddress.port}/save`,
+      FOLO_WEBHOOK_SECRET: webhookSecret,
       NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --import=${blobLoader}`.trim(),
       SORTIFY_APP_URL: appUrl,
       SORTIFY_SMOKE_BLOB_FILE: artifactFile,
@@ -261,7 +264,16 @@ try {
     import("@workflow/core/runtime"),
   ]);
 
-  const invalidResponse = await fetch(`${appUrl}/api/webhooks/folo`, {
+  const unauthorizedResponse = await fetch(`${appUrl}/api/webhooks/folo`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      entry: { url: "https://example.com/unauthorized" },
+    }),
+  });
+  assert.equal(unauthorizedResponse.status, 401);
+
+  const invalidResponse = await fetch(webhookUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ entry: { title: "Missing URL and content" } }),
@@ -280,7 +292,7 @@ try {
   ).join("\n")}\nEND-OF-TEXT-28`;
   assert(longText.length > 3_000);
 
-  const textResponse = await fetch(`${appUrl}/api/webhooks/folo`, {
+  const textResponse = await fetch(webhookUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -346,7 +358,7 @@ try {
   assert(!pageHtml.includes(escapedSentinel));
 
   const ordinaryUrl = "https://example.com/articles/27?source=folo";
-  const urlResponse = await fetch(`${appUrl}/api/webhooks/folo`, {
+  const urlResponse = await fetch(webhookUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -392,7 +404,7 @@ try {
     const bibigptCount = bibigptRequests.length;
     const blobCount = blobRequests.length;
     const cuboxCount = cuboxRequests.length;
-    const response = await fetch(`${appUrl}/api/webhooks/folo`, {
+    const response = await fetch(webhookUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -479,7 +491,7 @@ try {
     const bibigptCount = bibigptRequests.length;
     const blobCount = blobRequests.length;
     const cuboxCount = cuboxRequests.length;
-    const response = await fetch(`${appUrl}/api/webhooks/folo`, {
+    const response = await fetch(webhookUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -567,7 +579,7 @@ try {
   const rejectedFallbackBlobCount = blobRequests.length;
   const rejectedFallbackCuboxCount = cuboxRequests.length;
   const rejectedFallbackResponse = await fetch(
-    `${appUrl}/api/webhooks/folo`,
+    webhookUrl,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -605,7 +617,7 @@ try {
   assert.equal(bibigptRequests.length, 5);
 
   cuboxResponse = { status: 200, body: { code: -1100, message: "rejected" } };
-  const rejectedResponse = await fetch(`${appUrl}/api/webhooks/folo`, {
+  const rejectedResponse = await fetch(webhookUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -620,7 +632,7 @@ try {
   );
 
   cuboxResponse = { status: 500, body: { code: 200 } };
-  const httpFailureResponse = await fetch(`${appUrl}/api/webhooks/folo`, {
+  const httpFailureResponse = await fetch(webhookUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({

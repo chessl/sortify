@@ -3,6 +3,19 @@ import { processEntryWorkflow } from "@/workflows/process-entry";
 import { start } from "workflow/api";
 
 export async function POST(request: Request) {
+  const expectedSecret = process.env.FOLO_WEBHOOK_SECRET;
+  if (!expectedSecret) {
+    return Response.json(
+      { error: "Webhook authentication is not configured." },
+      { status: 503 },
+    );
+  }
+
+  const providedSecret = new URL(request.url).searchParams.get("secret");
+  if (providedSecret !== expectedSecret) {
+    return Response.json({ error: "Unauthorized." }, { status: 401 });
+  }
+
   const payload: unknown = await request.json().catch(() => null);
   const entry = parseFoloPayload(payload);
 
