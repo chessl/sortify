@@ -27,7 +27,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const run = await start(processEntryWorkflow, [entry]);
+    const run = await start(processEntryWorkflow, [entry], { region: "hkg1" });
     return Response.json({ runId: run.runId }, { status: 202 });
   } catch {
     return Response.json(

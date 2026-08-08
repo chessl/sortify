@@ -280,7 +280,7 @@ try {
   });
   assert.equal(invalidResponse.status, 400);
   assert.equal(cuboxRequests.length, 0);
-  const runsAfterInvalidRequest = await getWorld().runs.list({
+  const runsAfterInvalidRequest = await (await getWorld()).runs.list({
     resolveData: "none",
   });
   assert.deepEqual(runsAfterInvalidRequest.data, []);
