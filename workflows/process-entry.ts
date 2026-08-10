@@ -4,6 +4,8 @@ import { getVideoTranscript, type VideoTranscript } from "@/lib/bibigpt";
 import type { FoloEntry } from "@/lib/folo";
 import { saveToReader } from "@/lib/readwise";
 
+const READER_SAVE_MAX_RETRIES = 1;
+
 function escapeHtml(value: string) {
   return value.replace(/[&<>"']/g, (character) => {
     switch (character) {
@@ -45,7 +47,7 @@ async function saveUrlEntry(entry: Extract<FoloEntry, { kind: "url" }>) {
     location: "new",
   });
 }
-saveUrlEntry.maxRetries = 1;
+saveUrlEntry.maxRetries = READER_SAVE_MAX_RETRIES;
 
 async function saveTextEntry(entry: Extract<FoloEntry, { kind: "text" }>) {
   "use step";
@@ -57,13 +59,28 @@ async function saveTextEntry(entry: Extract<FoloEntry, { kind: "text" }>) {
     text: entry.text,
   });
   const hash = createHash("sha256").update(stableEntry).digest("hex");
+  let html = "";
+  let lineStart = 0;
+  for (let index = 0; index <= entry.text.length; index += 1) {
+    const character = entry.text[index];
+    if (
+      index < entry.text.length &&
+      character !== "\r" &&
+      character !== "\n"
+    ) {
+      continue;
+    }
+
+    html += `<p>${escapeHtml(entry.text.slice(lineStart, index))}</p>`;
+    if (character === "\r" && entry.text[index + 1] === "\n") {
+      index += 1;
+    }
+    lineStart = index + 1;
+  }
 
   return saveToReader({
     url: `https://sortify.invalid/text/${hash}`,
-    html: entry.text
-      .split(/\r\n|\r|\n/)
-      .map((line) => `<p>${escapeHtml(line)}</p>`)
-      .join(""),
+    html,
     title: entry.title ?? "Text from Folo",
     ...(entry.author !== undefined ? { author: entry.author } : {}),
     ...(entry.description !== undefined
@@ -72,7 +89,7 @@ async function saveTextEntry(entry: Extract<FoloEntry, { kind: "text" }>) {
     location: "new",
   });
 }
-saveTextEntry.maxRetries = 1;
+saveTextEntry.maxRetries = READER_SAVE_MAX_RETRIES;
 
 async function fetchVideoTranscript(
   entry: Extract<FoloEntry, { kind: "video" }>,
@@ -93,16 +110,21 @@ async function saveVideoEntry(
 ) {
   "use step";
 
-  const html = [
-    `<a href="${escapeHtml(entry.url)}">${escapeHtml(entry.url)}</a>`,
-    ...transcript.subtitles.map((subtitle) => {
-      const timestamps = [subtitle.startTime, subtitle.endTime]
-        .filter((seconds): seconds is number => seconds !== undefined)
-        .map(formatTimestamp)
-        .join(" – ");
-      return `<p>${timestamps ? `${timestamps} ` : ""}${escapeHtml(subtitle.text)}</p>`;
-    }),
-  ].join("");
+  const escapedUrl = escapeHtml(entry.url);
+  let html = `<a href="${escapedUrl}">${escapedUrl}</a>`;
+  for (const subtitle of transcript.subtitles) {
+    let timestamps = "";
+    if (subtitle.startTime !== undefined) {
+      timestamps = formatTimestamp(subtitle.startTime);
+    }
+    if (subtitle.endTime !== undefined) {
+      if (timestamps !== "") {
+        timestamps += " – ";
+      }
+      timestamps += formatTimestamp(subtitle.endTime);
+    }
+    html += `<p>${timestamps !== "" ? `${timestamps} ` : ""}${escapeHtml(subtitle.text)}</p>`;
+  }
 
   return saveToReader({
     url: entry.url,
@@ -120,14 +142,12 @@ async function saveVideoEntry(
     location: "new",
   });
 }
-saveVideoEntry.maxRetries = 1;
+saveVideoEntry.maxRetries = READER_SAVE_MAX_RETRIES;
 
 function formatTimestamp(seconds: number) {
   const wholeSeconds = Math.round(seconds);
   const hours = Math.floor(wholeSeconds / 3_600);
   const minutes = Math.floor((wholeSeconds % 3_600) / 60);
   const remainder = wholeSeconds % 60;
-  return [hours, minutes, remainder]
-    .map((part) => String(part).padStart(2, "0"))
-    .join(":");
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
 }
