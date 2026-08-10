@@ -130,15 +130,25 @@ const readerServer = createServer((request, response) => {
       response.destroy();
       return;
     }
-    response.writeHead(readerResponse.status, {
-      "content-type": "application/json",
-      ...readerResponse.headers,
-    });
-    response.end(
-      "rawBody" in readerResponse
-        ? readerResponse.rawBody
-        : JSON.stringify(readerResponse.body),
-    );
+    const sendReaderResponse = () => {
+      if (response.destroyed) {
+        return;
+      }
+      response.writeHead(readerResponse.status, {
+        "content-type": "application/json",
+        ...readerResponse.headers,
+      });
+      response.end(
+        "rawBody" in readerResponse
+          ? readerResponse.rawBody
+          : JSON.stringify(readerResponse.body),
+      );
+    };
+    if (readerResponse.delayMs !== undefined) {
+      setTimeout(sendReaderResponse, readerResponse.delayMs);
+      return;
+    }
+    sendReaderResponse();
   });
 });
 readerServer.listen(0, "127.0.0.1");
@@ -198,6 +208,7 @@ const app = spawn(
       BIBIGPT_API_URL: `http://127.0.0.1:${bibigptAddress.port}/api/v1/getSubtitle`,
       READWISE_ACCESS_TOKEN: readwiseToken,
       READWISE_API_URL: `http://127.0.0.1:${readerAddress.port}/api/v3/save/`,
+      READWISE_REQUEST_TIMEOUT_MS: "50",
       FOLO_WEBHOOK_SECRET: webhookSecret,
       WORKFLOW_LOCAL_BASE_URL: appUrl,
       WORKFLOW_LOCAL_DATA_DIR: workflowDataDir,
@@ -655,6 +666,20 @@ try {
   await expectReaderFailure({
     sourceUrl: "https://example.com/reader-disconnect",
     responses: [{ destroy: true }],
+    error: /Reader request failed before acknowledgement/,
+  });
+  await expectReaderFailure({
+    sourceUrl: "https://example.com/reader-timeout",
+    responses: [
+      {
+        delayMs: 250,
+        status: 201,
+        body: {
+          id: "reader-too-late",
+          url: "https://read.readwise.io/read/reader-too-late",
+        },
+      },
+    ],
     error: /Reader request failed before acknowledgement/,
   });
 

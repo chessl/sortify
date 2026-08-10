@@ -11,6 +11,7 @@ type ReaderDocument = {
 };
 
 const READER_SAVE_URL = "https://readwise.io/api/v3/save/";
+const READER_REQUEST_TIMEOUT_MS = 30_000;
 const HTTP_DATE_PATTERN =
   /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4} \d{2}:\d{2}:\d{2} GMT$/;
 
@@ -24,10 +25,24 @@ export async function saveToReader(document: ReaderDocument) {
     process.env.WORKFLOW_TARGET_WORLD === "local"
       ? process.env.READWISE_API_URL || READER_SAVE_URL
       : READER_SAVE_URL;
+  const configuredTimeout =
+    process.env.WORKFLOW_TARGET_WORLD === "local"
+      ? process.env.READWISE_REQUEST_TIMEOUT_MS
+      : undefined;
+  const requestTimeoutMs =
+    configuredTimeout === undefined
+      ? READER_REQUEST_TIMEOUT_MS
+      : Number(configuredTimeout);
+  if (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs <= 0) {
+    throw new FatalError(
+      "READWISE_REQUEST_TIMEOUT_MS must be a positive integer.",
+    );
+  }
 
   let response: Response;
   try {
     response = await fetch(endpoint, {
+      signal: AbortSignal.timeout(requestTimeoutMs),
       method: "POST",
       redirect: "manual",
       headers: {
