@@ -61,7 +61,7 @@ async function saveTextEntry(entry: Extract<FoloEntry, { kind: "text" }>) {
   return saveToReader({
     url: `https://sortify.invalid/text/${hash}`,
     html: entry.text
-      .split("\n")
+      .split(/\r\n|\r|\n/)
       .map((line) => `<p>${escapeHtml(line)}</p>`)
       .join(""),
     title: entry.title ?? "Text from Folo",

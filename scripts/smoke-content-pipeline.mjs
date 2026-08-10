@@ -334,9 +334,8 @@ try {
   });
   assert.deepEqual(runsAfterInvalidRequest.data, []);
 
-  const text = `First & <unsafe> "quoted" 'apostrophe'
-
-Final line > done`;
+  const text =
+    "First & <unsafe> \"quoted\" 'apostrophe'\r\n\rFinal line > done";
   const textPayload = {
     entry: {
       description: "Text summary & details",
@@ -346,7 +345,7 @@ Final line > done`;
     },
   };
   const expectedTextUrl =
-    "https://sortify.invalid/text/df2ad7124a698812d39f4a9348d5161bac30af4546cb65355a61065dd268c4c6";
+    "https://sortify.invalid/text/3d0684e1e9b3cab56c157bc9d4bb1509b3fbb0a5b0483935256e196557e97b06";
   const expectedTextBody = {
     url: expectedTextUrl,
     html: "<p>First &amp; &lt;unsafe&gt; &quot;quoted&quot; &#39;apostrophe&#39;</p><p></p><p>Final line &gt; done</p>",
