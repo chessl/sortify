@@ -4,7 +4,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Sortify",
-  description: "Send Folo entries to Cubox through durable workflows",
+  description: "Send Folo entries to Readwise Reader through durable workflows",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

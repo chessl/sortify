@@ -1,23 +1,19 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 
-const tempDir = await mkdtemp(join(tmpdir(), "sortify-ticket-30-"));
+const tempDir = await mkdtemp(join(tmpdir(), "sortify-content-pipeline-"));
 const workflowDataDir = join(tempDir, "workflow");
-const artifactFile = join(tempDir, "artifact.json");
-const cuboxRequests = [];
-const blobRequests = [];
 const readerRequests = [];
 const readerRequestBodies = [];
 const bibigptRequests = [];
-const bibigptToken = "ticket-30-token";
-const webhookSecret = "ticket-30-webhook-secret";
-const readwiseToken = "ticket-41-readwise-token";
+const bibigptToken = "smoke-bibigpt-token";
+const webhookSecret = "smoke-webhook-secret";
+const readwiseToken = "smoke-readwise-token";
 const youtubeUrl =
   "https://www.youtube.com/watch?v=sortify29&feature=share";
 const bilibiliUrl =
@@ -104,7 +100,6 @@ const bibigptFixtures = new Map([
     },
   ],
 ]);
-let cuboxResponse = { status: 200, body: { code: 200, message: "", data: null } };
 const defaultReaderResponse = {
   status: 201,
   body: {
@@ -114,28 +109,6 @@ const defaultReaderResponse = {
 };
 let readerResponses = [defaultReaderResponse];
 
-const cuboxServer = createServer((request, response) => {
-  let body = "";
-  request.setEncoding("utf8");
-  request.on("data", (chunk) => {
-    body += chunk;
-  });
-  request.on("end", () => {
-    cuboxRequests.push({
-      method: request.method,
-      url: request.url,
-      body: JSON.parse(body),
-    });
-    response.writeHead(cuboxResponse.status, {
-      "content-type": "application/json",
-    });
-    response.end(JSON.stringify(cuboxResponse.body));
-  });
-});
-cuboxServer.listen(0, "127.0.0.1");
-await once(cuboxServer, "listening");
-const cuboxAddress = cuboxServer.address();
-assert(cuboxAddress && typeof cuboxAddress !== "string");
 
 const readerServer = createServer((request, response) => {
   let body = "";
@@ -204,41 +177,6 @@ await once(bibigptServer, "listening");
 const bibigptAddress = bibigptServer.address();
 assert(bibigptAddress && typeof bibigptAddress !== "string");
 
-const blobServer = createServer((request, response) => {
-  let body = "";
-  request.setEncoding("utf8");
-  request.on("data", (chunk) => {
-    body += chunk;
-  });
-  request.on("end", async () => {
-    const pathname = new URL(request.url ?? "/", "http://blob.local").searchParams.get(
-      "pathname",
-    );
-    assert(pathname);
-    blobRequests.push({
-      method: request.method,
-      pathname,
-      headers: request.headers,
-      body: JSON.parse(body),
-    });
-    await writeFile(artifactFile, body);
-    response.writeHead(200, { "content-type": "application/json" });
-    response.end(
-      JSON.stringify({
-        url: `https://mock-store.private.blob.vercel-storage.com/${pathname}`,
-        downloadUrl: `https://mock-store.private.blob.vercel-storage.com/${pathname}?download=1`,
-        pathname,
-        contentType: "application/json; charset=utf-8",
-        contentDisposition: "inline",
-        etag: "smoke-etag",
-      }),
-    );
-  });
-});
-blobServer.listen(0, "127.0.0.1");
-await once(blobServer, "listening");
-const blobAddress = blobServer.address();
-assert(blobAddress && typeof blobAddress !== "string");
 
 const portProbe = createServer();
 portProbe.listen(0, "127.0.0.1");
@@ -250,27 +188,17 @@ await new Promise((resolveClose) => portProbe.close(resolveClose));
 
 const appUrl = `http://127.0.0.1:${appPort}`;
 const webhookUrl = `${appUrl}/api/webhooks/folo?secret=${encodeURIComponent(webhookSecret)}`;
-const blobLoader = pathToFileURL(
-  resolve("scripts/smoke-content-pipeline-blob.mjs"),
-).href;
 const app = spawn(
   process.execPath,
   [resolve("node_modules/next/dist/bin/next"), "dev", "-p", String(appPort)],
   {
     env: {
       ...process.env,
-      BLOB_READ_WRITE_TOKEN: "vercel_blob_rw_mock-store_secret",
       BIBIGPT_API_TOKEN: bibigptToken,
       BIBIGPT_API_URL: `http://127.0.0.1:${bibigptAddress.port}/api/v1/getSubtitle`,
-      CUBOX_API_URL: `http://127.0.0.1:${cuboxAddress.port}/save`,
       READWISE_ACCESS_TOKEN: readwiseToken,
       READWISE_API_URL: `http://127.0.0.1:${readerAddress.port}/api/v3/save/`,
       FOLO_WEBHOOK_SECRET: webhookSecret,
-      NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --import=${blobLoader}`.trim(),
-      SORTIFY_APP_URL: appUrl,
-      SORTIFY_SMOKE_BLOB_FILE: artifactFile,
-      VERCEL_BLOB_API_URL: `http://127.0.0.1:${blobAddress.port}`,
-      VERCEL_BLOB_RETRIES: "0",
       WORKFLOW_LOCAL_BASE_URL: appUrl,
       WORKFLOW_LOCAL_DATA_DIR: workflowDataDir,
       WORKFLOW_TARGET_WORLD: "local",
@@ -327,7 +255,6 @@ try {
     body: JSON.stringify({ entry: { title: "Missing URL and content" } }),
   });
   assert.equal(invalidResponse.status, 400);
-  assert.equal(cuboxRequests.length, 0);
   assert.equal(readerRequests.length, 0);
   const runsAfterInvalidRequest = await (await getWorld()).runs.list({
     resolveData: "none",
@@ -386,8 +313,6 @@ try {
   assert.equal(readerRequests[0].body.url, expectedTextUrl);
   assert.equal(readerRequests[1].body.url, expectedTextUrl);
   assert.equal(readerRequestBodies[0], readerRequestBodies[1]);
-  assert.equal(blobRequests.length, 0);
-  assert.equal(cuboxRequests.length, 0);
 
   const ordinaryUrl = "https://example.com/articles/27?source=folo";
   const urlResponse = await fetch(webhookUrl, {
@@ -410,7 +335,6 @@ try {
     documentId: "reader-document-41",
     readerUrl: "https://read.readwise.io/read/reader-document-41",
   });
-  assert.equal(blobRequests.length, 0);
   assert.equal(readerRequests.length, 3);
   assert.deepEqual(readerRequests[2], {
     method: "POST",
@@ -436,8 +360,6 @@ try {
     finalSubtitle,
   }) {
     const bibigptCount = bibigptRequests.length;
-    const blobCount = blobRequests.length;
-    const cuboxCount = cuboxRequests.length;
     const readerCount = readerRequests.length;
     const response = await fetch(webhookUrl, {
       method: "POST",
@@ -487,16 +409,12 @@ try {
     assert(savedHtml.indexOf(firstSubtitle) < savedHtml.indexOf(finalSubtitle));
     assert.equal(savedHtml.match(/<p>/g)?.length, 3);
     assert.equal(savedHtml.match(/<a /g)?.length, 1);
-    assert.equal(blobRequests.length, blobCount);
-    assert.equal(cuboxRequests.length, cuboxCount);
 
     return result;
   }
 
   async function runUnavailableVideoSmoke({ sourceUrl, title }) {
     const bibigptCount = bibigptRequests.length;
-    const blobCount = blobRequests.length;
-    const cuboxCount = cuboxRequests.length;
     const readerCount = readerRequests.length;
     const response = await fetch(webhookUrl, {
       method: "POST",
@@ -504,7 +422,7 @@ try {
       body: JSON.stringify({
         entry: {
           title,
-          description: "Folo description must not produce a degraded result",
+          description: "Unavailable video description",
           url: sourceUrl,
         },
       }),
@@ -524,8 +442,6 @@ try {
       authorization: `Bearer ${bibigptToken}`,
     });
     assert.equal(readerRequests.length, readerCount);
-    assert.equal(blobRequests.length, blobCount);
-    assert.equal(cuboxRequests.length, cuboxCount);
 
     return "failed";
   }
@@ -741,7 +657,6 @@ try {
     responses: [{ destroy: true }],
     error: /Reader request failed before acknowledgement/,
   });
-  assert.equal(blobRequests.length, 0);
 
   console.log(
     JSON.stringify({
@@ -749,8 +664,6 @@ try {
       textUrl: readerRequests[0].body.url,
       textStableRepeat: readerRequestBodies[0] === readerRequestBodies[1],
       textEscapedHtml: readerRequests[0].body.html,
-      textBlobWrites: 0,
-      textCuboxWrites: 0,
       urlStatus: urlResponse.status,
       ordinaryUrlOutcome: "saved",
       youtube: {
@@ -768,8 +681,6 @@ try {
         emptySubtitles: emptySubtitlesSmoke,
         missingSubtitles: missingSubtitlesSmoke,
         readerWrites: 0,
-        blobWrites: 0,
-        cuboxWrites: 0,
       },
       bibigptBearerRequests: bibigptRequests.length,
       invalidStatus: invalidResponse.status,
@@ -784,10 +695,8 @@ try {
     await once(app, "exit");
   }
   await Promise.all([
-    new Promise((resolveClose) => cuboxServer.close(resolveClose)),
     new Promise((resolveClose) => readerServer.close(resolveClose)),
     new Promise((resolveClose) => bibigptServer.close(resolveClose)),
-    new Promise((resolveClose) => blobServer.close(resolveClose)),
   ]);
   await rm(tempDir, { recursive: true, force: true });
 }
