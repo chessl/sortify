@@ -11,6 +11,8 @@ type ReaderDocument = {
 };
 
 const READER_SAVE_URL = "https://readwise.io/api/v3/save/";
+const HTTP_DATE_PATTERN =
+  /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4} \d{2}:\d{2}:\d{2} GMT$/;
 
 export async function saveToReader(document: ReaderDocument) {
   const accessToken = process.env.READWISE_ACCESS_TOKEN;
@@ -18,10 +20,16 @@ export async function saveToReader(document: ReaderDocument) {
     throw new FatalError("READWISE_ACCESS_TOKEN is not configured.");
   }
 
+  const endpoint =
+    process.env.WORKFLOW_TARGET_WORLD === "local"
+      ? process.env.READWISE_API_URL || READER_SAVE_URL
+      : READER_SAVE_URL;
+
   let response: Response;
   try {
-    response = await fetch(process.env.READWISE_API_URL || READER_SAVE_URL, {
+    response = await fetch(endpoint, {
       method: "POST",
+      redirect: "manual",
       headers: {
         Authorization: `Token ${accessToken}`,
         "Content-Type": "application/json",
@@ -79,6 +87,10 @@ function parseRetryAfter(value: string | null): number | null {
     return Number.isSafeInteger(seconds) && seconds <= Number.MAX_SAFE_INTEGER / 1000
       ? seconds * 1000
       : null;
+  }
+
+  if (!HTTP_DATE_PATTERN.test(value)) {
+    return null;
   }
 
   const timestamp = Date.parse(value);

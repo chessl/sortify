@@ -796,11 +796,22 @@ try {
     responses: [
       {
         status: 429,
-        headers: { "Retry-After": "not-a-delay" },
+        headers: { "Retry-After": "2026-08-10" },
         body: { detail: "rate limited" },
       },
     ],
     error: /Reader returned an invalid Retry-After header/,
+  });
+  await expectReaderFailure({
+    sourceUrl: "https://example.com/reader-redirect",
+    responses: [
+      {
+        status: 302,
+        headers: { Location: "/api/v3/save/" },
+        body: null,
+      },
+    ],
+    error: /Reader request failed with HTTP 302/,
   });
   await expectReaderFailure({
     sourceUrl: "https://example.com/reader-client-failure",
