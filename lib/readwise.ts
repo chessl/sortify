@@ -33,9 +33,13 @@ export async function saveToReader(document: ReaderDocument) {
     configuredTimeout === undefined
       ? READER_REQUEST_TIMEOUT_MS
       : Number(configuredTimeout);
-  if (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs <= 0) {
+  if (
+    !Number.isSafeInteger(requestTimeoutMs) ||
+    requestTimeoutMs <= 0 ||
+    requestTimeoutMs > READER_REQUEST_TIMEOUT_MS
+  ) {
     throw new FatalError(
-      "READWISE_REQUEST_TIMEOUT_MS must be a positive integer.",
+      `READWISE_REQUEST_TIMEOUT_MS must be an integer from 1 to ${READER_REQUEST_TIMEOUT_MS}.`,
     );
   }
 
