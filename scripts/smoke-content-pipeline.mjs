@@ -12,9 +12,11 @@ const workflowDataDir = join(tempDir, "workflow");
 const artifactFile = join(tempDir, "artifact.json");
 const cuboxRequests = [];
 const blobRequests = [];
+const readerRequests = [];
 const bibigptRequests = [];
 const bibigptToken = "ticket-30-token";
 const webhookSecret = "ticket-30-webhook-secret";
+const readwiseToken = "ticket-41-readwise-token";
 const youtubeUrl =
   "https://www.youtube.com/watch?v=sortify29&feature=share";
 const bilibiliUrl =
@@ -103,6 +105,14 @@ const bibigptFixtures = new Map([
   ],
 ]);
 let cuboxResponse = { status: 200, body: { code: 200, message: "", data: null } };
+const defaultReaderResponse = {
+  status: 201,
+  body: {
+    id: "reader-document-41",
+    url: "https://read.readwise.io/read/reader-document-41",
+  },
+};
+let readerResponses = [defaultReaderResponse];
 
 const cuboxServer = createServer((request, response) => {
   let body = "";
@@ -126,6 +136,41 @@ cuboxServer.listen(0, "127.0.0.1");
 await once(cuboxServer, "listening");
 const cuboxAddress = cuboxServer.address();
 assert(cuboxAddress && typeof cuboxAddress !== "string");
+
+const readerServer = createServer((request, response) => {
+  let body = "";
+  request.setEncoding("utf8");
+  request.on("data", (chunk) => {
+    body += chunk;
+  });
+  request.on("end", () => {
+    readerRequests.push({
+      method: request.method,
+      url: request.url,
+      authorization: request.headers.authorization,
+      contentType: request.headers["content-type"],
+      body: JSON.parse(body),
+    });
+    const readerResponse = readerResponses.shift() ?? defaultReaderResponse;
+    if (readerResponse.destroy === true) {
+      response.destroy();
+      return;
+    }
+    response.writeHead(readerResponse.status, {
+      "content-type": "application/json",
+      ...readerResponse.headers,
+    });
+    response.end(
+      "rawBody" in readerResponse
+        ? readerResponse.rawBody
+        : JSON.stringify(readerResponse.body),
+    );
+  });
+});
+readerServer.listen(0, "127.0.0.1");
+await once(readerServer, "listening");
+const readerAddress = readerServer.address();
+assert(readerAddress && typeof readerAddress !== "string");
 
 const bibigptServer = createServer((request, response) => {
   const requestUrl = new URL(request.url ?? "/", "http://bibigpt.local");
@@ -217,6 +262,8 @@ const app = spawn(
       BIBIGPT_API_TOKEN: bibigptToken,
       BIBIGPT_API_URL: `http://127.0.0.1:${bibigptAddress.port}/api/v1/getSubtitle`,
       CUBOX_API_URL: `http://127.0.0.1:${cuboxAddress.port}/save`,
+      READWISE_ACCESS_TOKEN: readwiseToken,
+      READWISE_API_URL: `http://127.0.0.1:${readerAddress.port}/api/v3/save/`,
       FOLO_WEBHOOK_SECRET: webhookSecret,
       NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --import=${blobLoader}`.trim(),
       SORTIFY_APP_URL: appUrl,
@@ -280,6 +327,7 @@ try {
   });
   assert.equal(invalidResponse.status, 400);
   assert.equal(cuboxRequests.length, 0);
+  assert.equal(readerRequests.length, 0);
   const runsAfterInvalidRequest = await (await getWorld()).runs.list({
     resolveData: "none",
   });
@@ -375,19 +423,23 @@ try {
   const urlHandoff = await urlResponse.json();
   assert.deepEqual(await getRun(urlHandoff.runId).returnValue, {
     outcome: "saved",
-    url: ordinaryUrl,
+    documentId: "reader-document-41",
+    readerUrl: "https://read.readwise.io/read/reader-document-41",
   });
   assert.equal(blobRequests.length, 1);
-  assert.deepEqual(cuboxRequests[1], {
-    method: "POST",
-    url: "/save",
-    body: {
-      type: "url",
-      content: ordinaryUrl,
-      title: "Ordinary URL remains direct",
-      description: "Ticket 27 behavior",
+  assert.deepEqual(readerRequests, [
+    {
+      method: "POST",
+      url: "/api/v3/save/",
+      authorization: `Token ${readwiseToken}`,
+      contentType: "application/json",
+      body: {
+        url: ordinaryUrl,
+        title: "Ordinary URL remains direct",
+        location: "new",
+      },
     },
-  });
+  ]);
 
   async function runVideoSmoke({
     sourceUrl,
@@ -616,35 +668,168 @@ try {
   }
   assert.equal(bibigptRequests.length, 5);
 
-  cuboxResponse = { status: 200, body: { code: -1100, message: "rejected" } };
-  const rejectedResponse = await fetch(webhookUrl, {
+  const reader200Url = "https://example.com/reader-existing";
+  readerResponses = [
+    {
+      status: 200,
+      body: {
+        id: "reader-existing-41",
+        url: "https://read.readwise.io/read/reader-existing-41",
+      },
+    },
+  ];
+  const reader200RequestCount = readerRequests.length;
+  const reader200Response = await fetch(webhookUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      entry: { url: "https://example.com/business-rejection" },
-    }),
+    body: JSON.stringify({ entry: { url: reader200Url } }),
   });
-  assert.equal(rejectedResponse.status, 202);
-  const rejectedHandoff = await rejectedResponse.json();
-  await assert.rejects(
-    getRun(rejectedHandoff.runId).returnValue,
-    /Cubox rejected the save request/,
-  );
+  assert.equal(reader200Response.status, 202);
+  const reader200Handoff = await reader200Response.json();
+  assert.deepEqual(await getRun(reader200Handoff.runId).returnValue, {
+    outcome: "saved",
+    documentId: "reader-existing-41",
+    readerUrl: "https://read.readwise.io/read/reader-existing-41",
+  });
+  assert.deepEqual(readerRequests.slice(reader200RequestCount), [
+    {
+      method: "POST",
+      url: "/api/v3/save/",
+      authorization: `Token ${readwiseToken}`,
+      contentType: "application/json",
+      body: { url: reader200Url, location: "new" },
+    },
+  ]);
 
-  cuboxResponse = { status: 500, body: { code: 200 } };
-  const httpFailureResponse = await fetch(webhookUrl, {
+  const rateLimitedUrl = "https://example.com/rate-limited-once";
+  readerResponses = [
+    {
+      status: 429,
+      headers: { "Retry-After": "0" },
+      body: { detail: "rate limited" },
+    },
+    {
+      status: 201,
+      body: {
+        id: "reader-after-retry-41",
+        url: "https://read.readwise.io/read/reader-after-retry-41",
+      },
+    },
+  ];
+  const rateLimitedRequestCount = readerRequests.length;
+  const rateLimitedResponse = await fetch(webhookUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      entry: { url: "https://example.com/http-failure" },
-    }),
+    body: JSON.stringify({ entry: { url: rateLimitedUrl } }),
   });
-  assert.equal(httpFailureResponse.status, 202);
-  const httpFailureHandoff = await httpFailureResponse.json();
-  await assert.rejects(
-    getRun(httpFailureHandoff.runId).returnValue,
-    /Cubox request failed with HTTP 500/,
-  );
+  assert.equal(rateLimitedResponse.status, 202);
+  const rateLimitedHandoff = await rateLimitedResponse.json();
+  assert.deepEqual(await getRun(rateLimitedHandoff.runId).returnValue, {
+    outcome: "saved",
+    documentId: "reader-after-retry-41",
+    readerUrl: "https://read.readwise.io/read/reader-after-retry-41",
+  });
+  assert.deepEqual(readerRequests.slice(rateLimitedRequestCount), [
+    {
+      method: "POST",
+      url: "/api/v3/save/",
+      authorization: `Token ${readwiseToken}`,
+      contentType: "application/json",
+      body: { url: rateLimitedUrl, location: "new" },
+    },
+    {
+      method: "POST",
+      url: "/api/v3/save/",
+      authorization: `Token ${readwiseToken}`,
+      contentType: "application/json",
+      body: { url: rateLimitedUrl, location: "new" },
+    },
+  ]);
+
+  async function expectReaderFailure({
+    sourceUrl,
+    responses,
+    error,
+    attempts = 1,
+  }) {
+    readerResponses = responses;
+    const requestCount = readerRequests.length;
+    const response = await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ entry: { url: sourceUrl } }),
+    });
+    assert.equal(response.status, 202);
+    const handoff = await response.json();
+    await assert.rejects(getRun(handoff.runId).returnValue, error);
+    assert.equal(readerRequests.length, requestCount + attempts);
+    for (const request of readerRequests.slice(requestCount)) {
+      assert.deepEqual(request, {
+        method: "POST",
+        url: "/api/v3/save/",
+        authorization: `Token ${readwiseToken}`,
+        contentType: "application/json",
+        body: { url: sourceUrl, location: "new" },
+      });
+    }
+  }
+
+  await expectReaderFailure({
+    sourceUrl: "https://example.com/rate-limited-twice",
+    responses: [
+      {
+        status: 429,
+        headers: { "Retry-After": "0" },
+        body: { detail: "rate limited" },
+      },
+      {
+        status: 429,
+        headers: { "Retry-After": "0" },
+        body: { detail: "still rate limited" },
+      },
+    ],
+    error: /Reader rate limit exceeded/,
+    attempts: 2,
+  });
+  await expectReaderFailure({
+    sourceUrl: "https://example.com/invalid-retry-after",
+    responses: [
+      {
+        status: 429,
+        headers: { "Retry-After": "not-a-delay" },
+        body: { detail: "rate limited" },
+      },
+    ],
+    error: /Reader returned an invalid Retry-After header/,
+  });
+  await expectReaderFailure({
+    sourceUrl: "https://example.com/reader-client-failure",
+    responses: [{ status: 401, body: { detail: "unauthorized" } }],
+    error: /Reader request failed with HTTP 401/,
+  });
+  await expectReaderFailure({
+    sourceUrl: "https://example.com/reader-server-failure",
+    responses: [{ status: 503, body: { detail: "unavailable" } }],
+    error: /Reader request failed with HTTP 503/,
+  });
+  await expectReaderFailure({
+    sourceUrl: "https://example.com/malformed-reader-success",
+    responses: [
+      {
+        status: 201,
+        body: {
+          id: 41,
+          url: "https://read.readwise.io/read/malformed-41",
+        },
+      },
+    ],
+    error: /Reader returned an invalid success response/,
+  });
+  await expectReaderFailure({
+    sourceUrl: "https://example.com/reader-disconnect",
+    responses: [{ destroy: true }],
+    error: /Reader request failed before acknowledgement/,
+  });
   assert.equal(blobRequests.length, 3);
 
   console.log(
@@ -680,8 +865,9 @@ try {
       bibigptBearerRequests: bibigptRequests.length,
       invalidStatus: invalidResponse.status,
       degradedCuboxRejection: "failed",
-      businessRejection: "failed",
-      httpFailure: "failed",
+      reader200Outcome: "saved",
+      reader429RetryOutcome: "saved",
+      readerFatalFailures: 5,
     }),
   );
 } finally {
@@ -691,6 +877,7 @@ try {
   }
   await Promise.all([
     new Promise((resolveClose) => cuboxServer.close(resolveClose)),
+    new Promise((resolveClose) => readerServer.close(resolveClose)),
     new Promise((resolveClose) => bibigptServer.close(resolveClose)),
     new Promise((resolveClose) => blobServer.close(resolveClose)),
   ]);

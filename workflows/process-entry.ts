@@ -6,6 +6,7 @@ import {
 } from "@/lib/content";
 import { saveUrlToCubox } from "@/lib/cubox";
 import type { FoloEntry } from "@/lib/folo";
+import { saveToReader } from "@/lib/readwise";
 
 export async function processEntryWorkflow(entry: FoloEntry) {
   "use workflow";
@@ -32,8 +33,13 @@ export async function processEntryWorkflow(entry: FoloEntry) {
 async function saveUrlEntry(entry: Extract<FoloEntry, { kind: "url" }>) {
   "use step";
 
-  return saveUrlToCubox(entry);
+  return saveToReader({
+    url: entry.url,
+    ...(entry.title !== undefined ? { title: entry.title } : {}),
+    location: "new",
+  });
 }
+saveUrlEntry.maxRetries = 1;
 
 async function persistTextEntry(
   entry: Extract<FoloEntry, { kind: "text" }>,
