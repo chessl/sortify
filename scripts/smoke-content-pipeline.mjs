@@ -13,6 +13,7 @@ const artifactFile = join(tempDir, "artifact.json");
 const cuboxRequests = [];
 const blobRequests = [];
 const readerRequests = [];
+const readerRequestBodies = [];
 const bibigptRequests = [];
 const bibigptToken = "ticket-30-token";
 const webhookSecret = "ticket-30-webhook-secret";
@@ -50,7 +51,7 @@ const bibigptFixtures = new Map([
         publishedDate: "2026-08-01",
         subtitlesArray: [
           { index: 0, startTime: 0, end: 1.9996, text: "YT FIRST SEGMENT 29" },
-          { index: 1, startTime: 1.9996, end: 120, text: "YT MIDDLE SEGMENT 29" },
+          { index: 1, startTime: 1.9996, end: 120, text: '<YT MIDDLE & "SEGMENT"> 29' },
           { index: 2, startTime: 120, end: 125.5, text: "YT FINAL SEGMENT 29" },
         ],
       },
@@ -72,7 +73,6 @@ const bibigptFixtures = new Map([
         type: "bilibili",
         title: "bilibili multi-part complete transcript",
         author: "bilibili creator",
-        description: "Part 7 source description",
         cover: "https://example.com/bilibili-cover.jpg",
         duration: 63,
         publishedDate: "2026-08-02",
@@ -144,6 +144,7 @@ const readerServer = createServer((request, response) => {
     body += chunk;
   });
   request.on("end", () => {
+    readerRequestBodies.push(body);
     readerRequests.push({
       method: request.method,
       url: request.url,
@@ -333,77 +334,61 @@ try {
   });
   assert.deepEqual(runsAfterInvalidRequest.data, []);
 
-  const escapedSentinel = `<script>alert("text-only & escaped")</script>`;
-  const longText = `${escapedSentinel}\n${Array.from(
-    { length: 420 },
-    (_, index) => `Line ${String(index).padStart(3, "0")}: complete private text artifact.`,
-  ).join("\n")}\nEND-OF-TEXT-28`;
-  assert(longText.length > 3_000);
+  const text = `First & <unsafe> "quoted" 'apostrophe'
 
-  const textResponse = await fetch(webhookUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      entry: {
-        id: "entry-28",
-        title: "Ticket 28 text smoke",
-        description: "Text-only entry description",
-        content: longText,
-        author: "Folo author",
-        url: "not a valid URL",
-        ignored: "not persisted",
-      },
-      feed: { id: "feed-28", secretEnvelopeField: "not persisted" },
-      view: 0,
-    }),
-  });
-  assert.equal(textResponse.status, 202);
-  const textHandoff = await textResponse.json();
-  assert.match(textHandoff.runId, /^wrun_/);
-  const textResult = await getRun(textHandoff.runId).returnValue;
-  assert.equal(textResult.outcome, "saved");
-  assert.match(textResult.contentId, /^[0-9a-f-]{36}$/);
-  assert.equal(textResult.url, `${appUrl}/content/${textResult.contentId}`);
+Final line > done`;
+  const textPayload = {
+    entry: {
+      description: "Text summary & details",
+      content: text,
+      author: "Folo <Author> & Co.",
+      url: "not a valid URL",
+    },
+  };
+  const expectedTextUrl =
+    "https://sortify.invalid/text/df2ad7124a698812d39f4a9348d5161bac30af4546cb65355a61065dd268c4c6";
+  const expectedTextBody = {
+    url: expectedTextUrl,
+    html: "<p>First &amp; &lt;unsafe&gt; &quot;quoted&quot; &#39;apostrophe&#39;</p><p></p><p>Final line &gt; done</p>",
+    title: "Text from Folo",
+    author: "Folo <Author> & Co.",
+    summary: "Text summary & details",
+    location: "new",
+  };
 
-  assert.equal(blobRequests.length, 1);
-  const [blobRequest] = blobRequests;
-  assert.equal(blobRequest.method, "PUT");
-  assert.equal(blobRequest.pathname, `content/${textResult.contentId}.json`);
-  assert.equal(blobRequest.headers["x-vercel-blob-access"], "private");
-  assert.equal(blobRequest.headers["x-add-random-suffix"], "0");
-  assert.equal(blobRequest.headers["x-allow-overwrite"], "0");
-  assert.deepEqual(blobRequest.body, {
-    kind: "text",
-    text: longText,
-    title: "Ticket 28 text smoke",
-    description: "Text-only entry description",
-    author: "Folo author",
-  });
-
-  assert.deepEqual(cuboxRequests, [
-    {
+  const textResults = [];
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const textResponse = await fetch(webhookUrl, {
       method: "POST",
-      url: "/save",
-      body: {
-        type: "url",
-        content: textResult.url,
-        title: "Ticket 28 text smoke",
-        description: "Text-only entry description",
-      },
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(textPayload),
+    });
+    assert.equal(textResponse.status, 202);
+    const textHandoff = await textResponse.json();
+    assert.match(textHandoff.runId, /^wrun_/);
+    textResults.push(await getRun(textHandoff.runId).returnValue);
+  }
+
+  assert.deepEqual(textResults, [
+    {
+      outcome: "saved",
+      documentId: "reader-document-41",
+      readerUrl: "https://read.readwise.io/read/reader-document-41",
+    },
+    {
+      outcome: "saved",
+      documentId: "reader-document-41",
+      readerUrl: "https://read.readwise.io/read/reader-document-41",
     },
   ]);
-
-  const pageResponse = await fetch(textResult.url);
-  assert.equal(pageResponse.status, 200);
-  assert.match(pageResponse.headers.get("content-type") ?? "", /^text\/html/);
-  const pageHtml = await pageResponse.text();
-  assert(pageHtml.includes("Ticket 28 text smoke"));
-  assert(pageHtml.includes("Folo author"));
-  assert(pageHtml.includes("Line 000: complete private text artifact."));
-  assert(pageHtml.includes("Line 419: complete private text artifact."));
-  assert(pageHtml.includes("END-OF-TEXT-28"));
-  assert(pageHtml.includes("&lt;script&gt;alert(&quot;text-only &amp; escaped&quot;)&lt;/script&gt;"));
-  assert(!pageHtml.includes(escapedSentinel));
+  assert.equal(readerRequests.length, 2);
+  assert.deepEqual(readerRequests[0].body, expectedTextBody);
+  assert.deepEqual(readerRequests[1].body, expectedTextBody);
+  assert.equal(readerRequests[0].body.url, expectedTextUrl);
+  assert.equal(readerRequests[1].body.url, expectedTextUrl);
+  assert.equal(readerRequestBodies[0], readerRequestBodies[1]);
+  assert.equal(blobRequests.length, 0);
+  assert.equal(cuboxRequests.length, 0);
 
   const ordinaryUrl = "https://example.com/articles/27?source=folo";
   const urlResponse = await fetch(webhookUrl, {
@@ -426,130 +411,42 @@ try {
     documentId: "reader-document-41",
     readerUrl: "https://read.readwise.io/read/reader-document-41",
   });
-  assert.equal(blobRequests.length, 1);
-  assert.deepEqual(readerRequests, [
-    {
-      method: "POST",
-      url: "/api/v3/save/",
-      authorization: `Token ${readwiseToken}`,
-      contentType: "application/json",
-      body: {
-        url: ordinaryUrl,
-        title: "Ordinary URL remains direct",
-        location: "new",
-      },
+  assert.equal(blobRequests.length, 0);
+  assert.equal(readerRequests.length, 3);
+  assert.deepEqual(readerRequests[2], {
+    method: "POST",
+    url: "/api/v3/save/",
+    authorization: `Token ${readwiseToken}`,
+    contentType: "application/json",
+    body: {
+      url: ordinaryUrl,
+      title: "Ordinary URL remains direct",
+      location: "new",
     },
-  ]);
+  });
 
   async function runVideoSmoke({
     sourceUrl,
-    platform,
     title,
     author,
-    description,
-    coverUrl,
-    duration,
-    publishedDate,
-    subtitles,
-    expectedTiming,
+    summary,
+    imageUrl,
+    foloDescription,
+    expectedHtml,
+    firstSubtitle,
+    finalSubtitle,
   }) {
     const bibigptCount = bibigptRequests.length;
     const blobCount = blobRequests.length;
     const cuboxCount = cuboxRequests.length;
+    const readerCount = readerRequests.length;
     const response = await fetch(webhookUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         entry: {
-          title: `Folo title for ${platform}`,
-          description: `Folo description for ${platform}`,
-          url: sourceUrl,
-        },
-      }),
-    });
-    assert.equal(response.status, 202);
-    const handoff = await response.json();
-    const result = await getRun(handoff.runId).returnValue;
-    assert.equal(result.outcome, "saved");
-    assert.match(result.contentId, /^[0-9a-f-]{36}$/);
-    assert.equal(result.url, `${appUrl}/content/${result.contentId}`);
-
-    assert.equal(bibigptRequests.length, bibigptCount + 1);
-    assert.deepEqual(bibigptRequests[bibigptCount], {
-      method: "GET",
-      pathname: "/api/v1/getSubtitle",
-      sourceUrl,
-      authorization: `Bearer ${bibigptToken}`,
-    });
-
-    assert.equal(blobRequests.length, blobCount + 1);
-    const artifactRequest = blobRequests[blobCount];
-    assert.equal(artifactRequest.method, "PUT");
-    assert.equal(
-      artifactRequest.pathname,
-      `content/${result.contentId}.json`,
-    );
-    assert.deepEqual(artifactRequest.body, {
-      kind: "video-transcript",
-      platform,
-      sourceUrl,
-      title,
-      subtitles,
-      author,
-      description,
-      coverUrl,
-      duration,
-      publishedDate,
-    });
-
-    assert.equal(cuboxRequests.length, cuboxCount + 1);
-    assert.deepEqual(cuboxRequests[cuboxCount], {
-      method: "POST",
-      url: "/save",
-      body: {
-        type: "url",
-        content: result.url,
-        title: `[Full transcript · ${platform}] ${title}`,
-        description: `Full ordered transcript from ${platform}. Original video: ${sourceUrl}`,
-      },
-    });
-
-    const videoPageResponse = await fetch(result.url);
-    assert.equal(videoPageResponse.status, 200);
-    const videoPageHtml = await videoPageResponse.text();
-    assert(videoPageHtml.includes(title));
-    assert(videoPageHtml.includes(platform));
-    assert(videoPageHtml.includes(author));
-    assert(videoPageHtml.includes(description));
-    assert(videoPageHtml.includes(publishedDate));
-    assert(videoPageHtml.includes("Full transcript"));
-    assert(videoPageHtml.includes(expectedTiming));
-    assert(videoPageHtml.includes("Open original video"));
-    assert(videoPageHtml.includes(sourceUrl.replaceAll("&", "&amp;")));
-    for (const subtitle of subtitles) {
-      assert(videoPageHtml.includes(subtitle.text));
-    }
-
-    return {
-      result,
-      pageStatus: videoPageResponse.status,
-      hasFinalSegment: videoPageHtml.includes(
-        subtitles[subtitles.length - 1].text,
-      ),
-    };
-  }
-
-  async function runDegradedVideoSmoke({ sourceUrl, title }) {
-    const bibigptCount = bibigptRequests.length;
-    const blobCount = blobRequests.length;
-    const cuboxCount = cuboxRequests.length;
-    const response = await fetch(webhookUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        entry: {
-          title,
-          description: "This source description must not replace the fallback",
+          title: "Folo video title",
+          description: foloDescription,
           url: sourceUrl,
         },
       }),
@@ -558,8 +455,9 @@ try {
     const handoff = await response.json();
     const result = await getRun(handoff.runId).returnValue;
     assert.deepEqual(result, {
-      outcome: "degraded",
-      url: sourceUrl,
+      outcome: "saved",
+      documentId: "reader-document-41",
+      readerUrl: "https://read.readwise.io/read/reader-document-41",
     });
 
     assert.equal(bibigptRequests.length, bibigptCount + 1);
@@ -569,103 +467,106 @@ try {
       sourceUrl,
       authorization: `Bearer ${bibigptToken}`,
     });
-    assert.equal(blobRequests.length, blobCount);
-    assert.equal(cuboxRequests.length, cuboxCount + 1);
-    assert.deepEqual(cuboxRequests[cuboxCount], {
+
+    assert.equal(readerRequests.length, readerCount + 1);
+    assert.deepEqual(readerRequests[readerCount], {
       method: "POST",
-      url: "/save",
+      url: "/api/v3/save/",
+      authorization: `Token ${readwiseToken}`,
+      contentType: "application/json",
       body: {
-        type: "url",
-        content: sourceUrl,
-        title: `[字幕提取失败] ${title}`,
-        description: "字幕提取失败，已保存原视频链接。",
+        url: sourceUrl,
+        html: expectedHtml,
+        title,
+        author,
+        summary,
+        image_url: imageUrl,
+        location: "new",
       },
     });
+    const savedHtml = readerRequests[readerCount].body.html;
+    assert(savedHtml.indexOf(firstSubtitle) < savedHtml.indexOf(finalSubtitle));
+    assert.equal(savedHtml.match(/<p>/g)?.length, 3);
+    assert.equal(savedHtml.match(/<a /g)?.length, 1);
+    assert.equal(blobRequests.length, blobCount);
+    assert.equal(cuboxRequests.length, cuboxCount);
 
     return result;
   }
 
-  const youtubeSmoke = await runVideoSmoke({
-    sourceUrl: youtubeUrl,
-    platform: "YouTube",
-    title: "YouTube complete transcript",
-    author: "YouTube creator",
-    description: "YouTube source description",
-    coverUrl: "https://example.com/youtube-cover.jpg",
-    duration: 125.5,
-    publishedDate: "2026-08-01",
-    subtitles: [
-      { text: "YT FIRST SEGMENT 29", startTime: 0, endTime: 1.9996 },
-      { text: "YT MIDDLE SEGMENT 29", startTime: 1.9996, endTime: 120 },
-      { text: "YT FINAL SEGMENT 29", startTime: 120, endTime: 125.5 },
-    ],
-    expectedTiming: "00:00:02",
-  });
-  const bilibiliSmoke = await runVideoSmoke({
-    sourceUrl: bilibiliUrl,
-    platform: "bilibili",
-    title: "bilibili multi-part complete transcript",
-    author: "bilibili creator",
-    description: "Part 7 source description",
-    coverUrl: "https://example.com/bilibili-cover.jpg",
-    duration: 63,
-    publishedDate: "2026-08-02",
-    subtitles: [
-      { text: "BILI P7 FIRST SEGMENT 29", startTime: 0, endTime: 20 },
-      { text: "BILI P7 MIDDLE SEGMENT 29", startTime: 20, endTime: 40 },
-      { text: "BILI P7 FINAL SEGMENT 29", startTime: 40, endTime: 63 },
-    ],
-    expectedTiming: "00:00:40",
-  });
-  const networkFailureSmoke = await runDegradedVideoSmoke({
-    sourceUrl: networkFailureUrl,
-    title: "Network failure source",
-  });
-  const emptySubtitlesSmoke = await runDegradedVideoSmoke({
-    sourceUrl: emptySubtitlesUrl,
-    title: "Empty subtitles source",
-  });
-  assert.equal(bibigptRequests.length, 4);
-
-  cuboxResponse = { status: 200, body: { code: -1100, message: "rejected" } };
-  const rejectedFallbackBlobCount = blobRequests.length;
-  const rejectedFallbackCuboxCount = cuboxRequests.length;
-  const rejectedFallbackResponse = await fetch(
-    webhookUrl,
-    {
+  async function runUnavailableVideoSmoke({ sourceUrl, title }) {
+    const bibigptCount = bibigptRequests.length;
+    const blobCount = blobRequests.length;
+    const cuboxCount = cuboxRequests.length;
+    const readerCount = readerRequests.length;
+    const response = await fetch(webhookUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         entry: {
-          title: "Missing subtitles source",
-          url: missingSubtitlesUrl,
+          title,
+          description: "Folo description must not produce a degraded result",
+          url: sourceUrl,
         },
       }),
-    },
-  );
-  assert.equal(rejectedFallbackResponse.status, 202);
-  const rejectedFallbackHandoff = await rejectedFallbackResponse.json();
-  await assert.rejects(
-    getRun(rejectedFallbackHandoff.runId).returnValue,
-    /Cubox rejected the save request/,
-  );
-  assert.equal(blobRequests.length, rejectedFallbackBlobCount);
-  const rejectedFallbackRequests = cuboxRequests.slice(
-    rejectedFallbackCuboxCount,
-  );
-  assert(rejectedFallbackRequests.length > 0);
-  for (const request of rejectedFallbackRequests) {
-    assert.deepEqual(request, {
-      method: "POST",
-      url: "/save",
-      body: {
-        type: "url",
-        content: missingSubtitlesUrl,
-        title: "[字幕提取失败] Missing subtitles source",
-        description: "字幕提取失败，已保存原视频链接。",
-      },
     });
+    assert.equal(response.status, 202);
+    const handoff = await response.json();
+    await assert.rejects(
+      getRun(handoff.runId).returnValue,
+      /Video subtitles are unavailable/,
+    );
+
+    assert.equal(bibigptRequests.length, bibigptCount + 1);
+    assert.deepEqual(bibigptRequests[bibigptCount], {
+      method: "GET",
+      pathname: "/api/v1/getSubtitle",
+      sourceUrl,
+      authorization: `Bearer ${bibigptToken}`,
+    });
+    assert.equal(readerRequests.length, readerCount);
+    assert.equal(blobRequests.length, blobCount);
+    assert.equal(cuboxRequests.length, cuboxCount);
+
+    return "failed";
   }
+
+  const youtubeSmoke = await runVideoSmoke({
+    sourceUrl: youtubeUrl,
+    title: "YouTube complete transcript",
+    author: "YouTube creator",
+    summary: "YouTube source description",
+    imageUrl: "https://example.com/youtube-cover.jpg",
+    foloDescription: "Folo description must lose to transcript description",
+    expectedHtml:
+      '<a href="https://www.youtube.com/watch?v=sortify29&amp;feature=share">https://www.youtube.com/watch?v=sortify29&amp;feature=share</a><p>00:00:00 – 00:00:02 YT FIRST SEGMENT 29</p><p>00:00:02 – 00:02:00 &lt;YT MIDDLE &amp; &quot;SEGMENT&quot;&gt; 29</p><p>00:02:00 – 00:02:06 YT FINAL SEGMENT 29</p>',
+    firstSubtitle: "YT FIRST SEGMENT 29",
+    finalSubtitle: "YT FINAL SEGMENT 29",
+  });
+  const bilibiliSmoke = await runVideoSmoke({
+    sourceUrl: bilibiliUrl,
+    title: "bilibili multi-part complete transcript",
+    author: "bilibili creator",
+    summary: "Folo description fallback for bilibili",
+    imageUrl: "https://example.com/bilibili-cover.jpg",
+    foloDescription: "Folo description fallback for bilibili",
+    expectedHtml:
+      '<a href="https://www.bilibili.com/video/BV1Sortify29?p=7&amp;vd_source=folo">https://www.bilibili.com/video/BV1Sortify29?p=7&amp;vd_source=folo</a><p>00:00:00 – 00:00:20 BILI P7 FIRST SEGMENT 29</p><p>00:00:20 – 00:00:40 BILI P7 MIDDLE SEGMENT 29</p><p>00:00:40 – 00:01:03 BILI P7 FINAL SEGMENT 29</p>',
+    firstSubtitle: "BILI P7 FIRST SEGMENT 29",
+    finalSubtitle: "BILI P7 FINAL SEGMENT 29",
+  });
+  const networkFailureSmoke = await runUnavailableVideoSmoke({
+    sourceUrl: networkFailureUrl,
+    title: "Network failure source",
+  });
+  const emptySubtitlesSmoke = await runUnavailableVideoSmoke({
+    sourceUrl: emptySubtitlesUrl,
+    title: "Empty subtitles source",
+  });
+  const missingSubtitlesSmoke = await runUnavailableVideoSmoke({
+    sourceUrl: missingSubtitlesUrl,
+    title: "Missing subtitles source",
+  });
   assert.equal(bibigptRequests.length, 5);
 
   const reader200Url = "https://example.com/reader-existing";
@@ -841,41 +742,38 @@ try {
     responses: [{ destroy: true }],
     error: /Reader request failed before acknowledgement/,
   });
-  assert.equal(blobRequests.length, 3);
+  assert.equal(blobRequests.length, 0);
 
   console.log(
     JSON.stringify({
-      textStatus: textResponse.status,
-      textRunId: textHandoff.runId,
-      contentId: textResult.contentId,
-      blobCount: blobRequests.length,
-      persistedTextLength: blobRequest.body.text.length,
-      pageStatus: pageResponse.status,
-      pageHasFinalLine: pageHtml.includes("END-OF-TEXT-28"),
-      pageEscapedReactText: !pageHtml.includes(escapedSentinel),
-      cuboxPageUrl: cuboxRequests[0].body.content,
+      textOutcome: textResults[0].outcome,
+      textUrl: readerRequests[0].body.url,
+      textStableRepeat: readerRequestBodies[0] === readerRequestBodies[1],
+      textEscapedHtml: readerRequests[0].body.html,
+      textBlobWrites: 0,
+      textCuboxWrites: 0,
       urlStatus: urlResponse.status,
       ordinaryUrlOutcome: "saved",
       youtube: {
         originalUrl: youtubeUrl,
-        contentId: youtubeSmoke.result.contentId,
-        pageStatus: youtubeSmoke.pageStatus,
-        hasFinalSegment: youtubeSmoke.hasFinalSegment,
+        documentId: youtubeSmoke.documentId,
+        readerUrl: youtubeSmoke.readerUrl,
       },
       bilibili: {
         originalUrl: bilibiliUrl,
-        contentId: bilibiliSmoke.result.contentId,
-        pageStatus: bilibiliSmoke.pageStatus,
-        hasFinalSegment: bilibiliSmoke.hasFinalSegment,
+        documentId: bilibiliSmoke.documentId,
+        readerUrl: bilibiliSmoke.readerUrl,
       },
-      degraded: {
-        networkFailure: networkFailureSmoke.outcome,
-        emptySubtitles: emptySubtitlesSmoke.outcome,
+      unavailable: {
+        networkFailure: networkFailureSmoke,
+        emptySubtitles: emptySubtitlesSmoke,
+        missingSubtitles: missingSubtitlesSmoke,
+        readerWrites: 0,
         blobWrites: 0,
+        cuboxWrites: 0,
       },
       bibigptBearerRequests: bibigptRequests.length,
       invalidStatus: invalidResponse.status,
-      degradedCuboxRejection: "failed",
       reader200Outcome: "saved",
       reader429RetryOutcome: "saved",
       readerFatalFailures: 5,

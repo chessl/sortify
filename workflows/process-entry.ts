@@ -1,12 +1,25 @@
+import { createHash } from "node:crypto";
+import { FatalError } from "workflow";
 import { getVideoTranscript, type VideoTranscript } from "@/lib/bibigpt";
-import {
-  persistTextArtifact,
-  persistVideoTranscriptArtifact,
-  type ContentArtifactReference,
-} from "@/lib/content";
-import { saveUrlToCubox } from "@/lib/cubox";
 import type { FoloEntry } from "@/lib/folo";
 import { saveToReader } from "@/lib/readwise";
+
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, (character) => {
+    switch (character) {
+      case "&":
+        return "&amp;";
+      case "<":
+        return "&lt;";
+      case ">":
+        return "&gt;";
+      case '"':
+        return "&quot;";
+      default:
+        return "&#39;";
+    }
+  });
+}
 
 export async function processEntryWorkflow(entry: FoloEntry) {
   "use workflow";
@@ -16,18 +29,11 @@ export async function processEntryWorkflow(entry: FoloEntry) {
   }
 
   if (entry.kind === "text") {
-    const reference = await persistTextEntry(entry);
-    return saveTextEntry(entry, reference);
+    return saveTextEntry(entry);
   }
 
-  const transcriptResult = await fetchVideoTranscript(entry);
-  if (transcriptResult.outcome === "unavailable") {
-    return saveDegradedVideoEntry(entry);
-  }
-
-  const { transcript } = transcriptResult;
-  const reference = await persistVideoEntry(entry, transcript);
-  return saveVideoEntry(entry, transcript.title, reference);
+  const transcript = await fetchVideoTranscript(entry);
+  return saveVideoEntry(entry, transcript);
 }
 
 async function saveUrlEntry(entry: Extract<FoloEntry, { kind: "url" }>) {
@@ -41,74 +47,87 @@ async function saveUrlEntry(entry: Extract<FoloEntry, { kind: "url" }>) {
 }
 saveUrlEntry.maxRetries = 1;
 
-async function persistTextEntry(
-  entry: Extract<FoloEntry, { kind: "text" }>,
-) {
+async function saveTextEntry(entry: Extract<FoloEntry, { kind: "text" }>) {
   "use step";
 
-  return persistTextArtifact(entry);
-}
-
-async function saveTextEntry(
-  entry: Extract<FoloEntry, { kind: "text" }>,
-  reference: ContentArtifactReference,
-) {
-  "use step";
-
-  const result = await saveUrlToCubox({
-    url: reference.pageUrl,
-    ...(entry.title !== undefined ? { title: entry.title } : {}),
-    ...(entry.description !== undefined
-      ? { description: entry.description }
-      : {}),
+  const stableEntry = JSON.stringify({
+    title: entry.title ?? null,
+    author: entry.author ?? null,
+    description: entry.description ?? null,
+    text: entry.text,
   });
+  const hash = createHash("sha256").update(stableEntry).digest("hex");
 
-  return { ...result, contentId: reference.contentId };
+  return saveToReader({
+    url: `https://sortify.invalid/text/${hash}`,
+    html: entry.text
+      .split("\n")
+      .map((line) => `<p>${escapeHtml(line)}</p>`)
+      .join(""),
+    title: entry.title ?? "Text from Folo",
+    ...(entry.author !== undefined ? { author: entry.author } : {}),
+    ...(entry.description !== undefined
+      ? { summary: entry.description }
+      : {}),
+    location: "new",
+  });
 }
+saveTextEntry.maxRetries = 1;
 
 async function fetchVideoTranscript(
   entry: Extract<FoloEntry, { kind: "video" }>,
 ) {
   "use step";
 
-  return getVideoTranscript(entry.url);
+  const result = await getVideoTranscript(entry.url);
+  if (result.outcome === "unavailable") {
+    throw new FatalError("Video subtitles are unavailable.");
+  }
+
+  return result.transcript;
 }
 
-async function saveDegradedVideoEntry(
-  entry: Extract<FoloEntry, { kind: "video" }>,
-) {
-  "use step";
-
-  const result = await saveUrlToCubox({
-    url: entry.url,
-    title: `[字幕提取失败] ${entry.title ?? `${entry.platform} video`}`,
-    description: "字幕提取失败，已保存原视频链接。",
-  });
-
-  return { ...result, outcome: "degraded" as const };
-}
-
-async function persistVideoEntry(
+async function saveVideoEntry(
   entry: Extract<FoloEntry, { kind: "video" }>,
   transcript: VideoTranscript,
 ) {
   "use step";
 
-  return persistVideoTranscriptArtifact(entry, transcript);
-}
+  const html = [
+    `<a href="${escapeHtml(entry.url)}">${escapeHtml(entry.url)}</a>`,
+    ...transcript.subtitles.map((subtitle) => {
+      const timestamps = [subtitle.startTime, subtitle.endTime]
+        .filter((seconds): seconds is number => seconds !== undefined)
+        .map(formatTimestamp)
+        .join(" – ");
+      return `<p>${timestamps ? `${timestamps} ` : ""}${escapeHtml(subtitle.text)}</p>`;
+    }),
+  ].join("");
 
-async function saveVideoEntry(
-  entry: Extract<FoloEntry, { kind: "video" }>,
-  title: string,
-  reference: ContentArtifactReference,
-) {
-  "use step";
-
-  const result = await saveUrlToCubox({
-    url: reference.pageUrl,
-    title: `[Full transcript · ${entry.platform}] ${title}`,
-    description: `Full ordered transcript from ${entry.platform}. Original video: ${entry.url}`,
+  return saveToReader({
+    url: entry.url,
+    html,
+    title: transcript.title,
+    ...(transcript.author !== undefined ? { author: transcript.author } : {}),
+    ...(transcript.description !== undefined
+      ? { summary: transcript.description }
+      : entry.description !== undefined
+        ? { summary: entry.description }
+        : {}),
+    ...(transcript.coverUrl !== undefined
+      ? { image_url: transcript.coverUrl }
+      : {}),
+    location: "new",
   });
+}
+saveVideoEntry.maxRetries = 1;
 
-  return { ...result, contentId: reference.contentId };
+function formatTimestamp(seconds: number) {
+  const wholeSeconds = Math.round(seconds);
+  const hours = Math.floor(wholeSeconds / 3_600);
+  const minutes = Math.floor((wholeSeconds % 3_600) / 60);
+  const remainder = wholeSeconds % 60;
+  return [hours, minutes, remainder]
+    .map((part) => String(part).padStart(2, "0"))
+    .join(":");
 }
